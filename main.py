@@ -16,7 +16,7 @@ class ItemUpdate(BaseModel):
     in_stock: bool | None = None
 
 
-# Simple in-memory storage (data is lost when the server restarts)
+
 items_db: dict[int, Item] = {}
 
 @app.get("/")
