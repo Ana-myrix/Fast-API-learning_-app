@@ -1,70 +1,38 @@
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
+from contextlib import asynccontextmanager
 
-app = FastAPI()
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 
-
-class Item(BaseModel):
-    name: str
-    price: float
-    in_stock: bool = True
-
-
-class ItemUpdate(BaseModel):
-    name: str | None = None
-    price: float | None = None
-    in_stock: bool | None = None
+from models.database import SessionLocal
+from routes import auth, general, items
+from services import auth_service
+from services.errors import AppError
 
 
-
-items_db: dict[int, Item] = {}
-
-@app.get("/")
-def hello():
-    return {"message": "hello,world!"}
-
-@app.get("/items/{item_id}")
-def read_item(item_id: int, q: str | None = None):
-    return {"item_id": item_id, "q": q}
-@app.get("/users/{user_id}")
-def read_user(user_id: str):
-    return {"user_id" : user_id}
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Runs once when the server starts. Tables must exist first
+    # (run: alembic upgrade head).
+    with SessionLocal() as db:
+        auth_service.ensure_demo_user(db)
+    yield
 
 
-# POST - create a new item
-@app.post("/items/{item_id}", status_code=201)
-def create_item(item_id: int, item: Item):
-    if item_id in items_db:
-        raise HTTPException(status_code=400, detail="Item already exists")
-    items_db[item_id] = item
-    return {"item_id": item_id, "item": item}
+app = FastAPI(title="FastAPI API", lifespan=lifespan)
 
 
-# PUT - replace an existing item completely
-@app.put("/items/{item_id}")
-def replace_item(item_id: int, item: Item):
-    if item_id not in items_db:
-        raise HTTPException(status_code=404, detail="Item not found")
-    items_db[item_id] = item
-    return {"item_id": item_id, "item": item}
+# Turns AppError from the services into a normal JSON error response.
+@app.exception_handler(AppError)
+async def app_error_handler(request: Request, exc: AppError):
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
 
-# PATCH - update only the fields that were sent
-@app.patch("/items/{item_id}")
-def update_item(item_id: int, changes: ItemUpdate):
-    if item_id not in items_db:
-        raise HTTPException(status_code=404, detail="Item not found")
-    updated = items_db[item_id].model_copy(
-        update=changes.model_dump(exclude_unset=True)
-    )
-    items_db[item_id] = updated
-    return {"item_id": item_id, "item": updated}
+app.include_router(general.router)
+app.include_router(auth.router)
+app.include_router(items.router)
 
 
-# DELETE - remove an item
-@app.delete("/items/{item_id}")
-def delete_item(item_id: int):
-    if item_id not in items_db:
-        raise HTTPException(status_code=404, detail="Item not found")
-    del items_db[item_id]
-    return {"message": f"Item {item_id} deleted"}
+if __name__ == "__main__":
+    import uvicorn
+
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
